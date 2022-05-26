@@ -1,0 +1,9 @@
+[project]
+title = editor-script-components
+
+[library]
+include_dirs = editor-script-components
+
+[bootstrap]
+main_collection = /main/main.collectionc
+

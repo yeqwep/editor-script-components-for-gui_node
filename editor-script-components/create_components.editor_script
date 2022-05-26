@@ -1,0 +1,288 @@
+local file_templates = require "editor-script-components.file_templates"
+
+local M = {}
+
+local function ends_with(path, suffix)
+    return path:find(suffix, nil, true) or path:find(suffix, nil, true)
+end
+
+local function path_segments(path)
+    return string.match(path, "(.-)([^\\/]-%.?([^%.\\/]*))$")
+end
+
+local function name_ext(file_name)
+    return string.match(file_name, "(.+)%..+")
+end
+
+local function create_multiple(opts)
+    local paths = {}
+    if opts and opts.selection then
+        for _, id in pairs(opts.selection) do
+            local path = editor.get(id, "path")
+            local base_path, file_name, ext = path_segments(path)
+            local name = name_ext(file_name)
+            
+            local extension = ""
+            local string = ""
+            if ext == "spinescene" then
+                string = file_templates.spine_model(path)
+                extension = ".spinemodel"
+            elseif ext == "wav" or ext == "ogg" then
+                string = file_templates.sound(path)
+                extension = ".sound"
+            end
+            
+            local file = io.open("." .. base_path .. name .. extension, "w")
+            file:write(string)
+            file:close()
+        end
+    end
+end
+
+local function check_file_suffix(opts, suffix)
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        if not ends_with(path, suffix) then
+            return false
+        end
+    end
+    return true
+end
+
+local function create_spine_scene(opts)
+    local paths = {}
+    local json_file
+    local atlas_file
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        if ends_with(path, ".json") then
+            json_file = path
+        else
+            atlas_file = path
+        end
+        table.insert(paths, path)
+    end
+    local base, file_name, ext =  path_segments(json_file)
+    local name = name_ext(file_name)
+    local string = file_templates.spine_scene(json_file, atlas_file)
+
+    local file = io.open("." .. base .. name .. ".spinescene", "w")
+    file:write(string)
+    file:close()
+end
+-- ---------------------------------------------------------------------------------
+-- add to gui nodes from lua table
+-- ---------------------------------------------------------------------------------
+local function get_require_name(path)
+    local b, name, ext = path_segments(path)
+    local base = string.sub(b,2)
+    base = string.gsub(base,"/",".")
+    local file_name = name_ext(name)
+    file_name = base .. file_name
+    return file_name
+end
+
+local function unpack(t, i)
+    i = i or 1
+    if t[i] ~= nil then
+        return t[i], unpack(t, i + 1)
+    end
+end
+
+local function ends_with(str, ending)
+    return ending == "" or str:sub(-#ending) == ending
+end
+local function is_add_gui_node(opts)
+    local g = false
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        if ends_with(path, ".gui") then
+            if g == true then
+                return false
+            end
+            g = true
+        elseif ends_with(path, ".lua") then
+        else
+            return false
+        end
+    end
+    return g and #opts.selection > 1
+end
+
+local function add_to_gui_node(opts)
+    local gui_file_name
+    local new_gui_node = ""
+    local require_file
+    local gui_file
+    local gui_file_text
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        if ends_with(path, ".gui") then
+            -- Get the text
+            gui_file_name = path
+            gui_file = io.open("." .. gui_file_name, "r")
+            gui_file_text = gui_file:read("*a")
+            gui_file:close()
+        end
+    end
+    -- find name and add node
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        if ends_with(path, ".lua") then
+            require_file = get_require_name(path)
+            local props = require (require_file)
+            local num = 0
+            for name,prop in pairs(props) do
+                local s = [[id: "]] .. name .. [["]]
+                local find_name = string.find(gui_file_text, s)
+                if find_name == nil then
+                    print("find " .. s .. ".... " .. name .. " doesn't exist.")
+                    num = num + 1
+                    local x = 100.0 + (num % 9) * 100.0
+                    local y = -100.0 - math.floor(num / 9)  * 100.0
+                    new_gui_node = new_gui_node .. file_templates.gui_node(name, x, y)
+                else
+                end
+            end
+        end
+    end
+
+    local new_text = gui_file_text .. new_gui_node
+    
+    gui_file = io.open("." .. gui_file_name, "w")
+    gui_file:write(new_text)
+    gui_file:close()
+end
+-- ---------------------------------------------------------------------------------
+-- new gui from lua table
+-- ---------------------------------------------------------------------------------
+local function is_new_gui(opts)
+    local atlas = false
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        if ends_with(path, ".lua") then
+        else
+            return false
+        end
+    end
+    return true
+end
+local function new_gui(opts)
+    local base_path = path_segments(editor.get(opts.selection[1], "path"))
+    local gui_file_name = base_path .. "GUI" .. os.date("%Y%m%d%H%M%S") .. ".gui"
+    local gui_script_name = base_path .. "GUI" .. os.date("%Y%m%d%H%M%S") .. ".gui_script"
+    -- create gui
+    local gui_string = ""
+    local require_file
+    for _, id in pairs(opts.selection) do
+        local path = editor.get(id, "path")
+        require_file = get_require_name(path)
+        local props = require (require_file)
+        local num = 0
+        for name,prop in pairs(props) do
+            num = num + 1
+            local x = 100.0 + (num % 9) * 100.0
+            local y = 600.0 - math.floor(num / 9)  * 100.0
+            gui_string = gui_string .. file_templates.gui_node(name, x, y)
+        end
+    end
+    gui_string = gui_string .. file_templates.new_gui(gui_script_name)
+
+    local gui_file = io.open("." .. gui_file_name, "w")
+    gui_file:write(gui_string)
+    gui_file:close()
+    -- create gui script
+    local gui_script_string = ""
+    gui_script_string = gui_script_string .. file_templates.new_gui_script(require_file)
+    local gui_script_file = io.open("." .. gui_script_name, "w")
+    gui_script_file:write(gui_script_string)
+    gui_script_file:close()
+end
+-- ---------------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------------
+function M.get_commands()
+    return {
+        {
+            label="Create Sound From...",
+            locations = {"Assets"},
+            active = function(opts)
+                for _, id in pairs(opts.selection) do
+                    local path = editor.get(id, "path")
+                    if ends_with(path, ".wav") or ends_with(path, ".ogg") then
+                    else
+                        return false
+                    end
+                end
+                return true
+            end,
+            query = {
+                selection = {type = "resource", cardinality = "many"}
+            },
+            run = create_multiple
+        },
+
+        {
+            label="Create Spine Scene From...",
+            locations = {"Assets"},
+            active = function(opts)
+                for _, id in pairs(opts.selection) do
+                    local path = editor.get(id, "path")
+                    local is_json = false
+                    local is_atlas = false
+                    if ends_with(path, ".spinejson") then 
+                        if is_json then
+                            return false
+                        end
+                        is_json = true
+                    elseif ends_with(path, ".atlas") then
+                        if is_atlas then 
+                            return false
+                        end
+                        is_atlas = true
+                    else
+                        return false
+                    end
+                end
+                return true
+            end,
+            query = {
+                selection = {type = "resource", cardinality = "many"}
+            },
+            run = create_spine_scene
+        },
+        {
+            label="Create Spine Model From...",
+            locations = {"Assets"},
+            active = function(opts)
+                return check_file_suffix(opts, ".spinescene")
+            end,
+            query = {
+                selection = {type = "resource", cardinality = "many"}
+            },
+            run = create_multiple
+        },
+        -- add to gui nodes from lua table
+        {
+            label="Add to gui node From...",
+            locations = {"Assets"},
+            query = {
+                selection = {type = "resource", cardinality = "many"}
+            },
+            active = is_add_gui_node,
+            run = add_to_gui_node
+        },
+         -- new gui from lua table
+        {
+            label="Create New gui node...",
+            locations = {"Assets"},
+            query = {
+                selection = {type = "resource", cardinality = "many"}
+            },
+            active = is_new_gui,
+            run = new_gui
+        }
+    }
+    
+end
+
+return M
